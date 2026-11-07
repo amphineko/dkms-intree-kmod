@@ -1,0 +1,4 @@
+out/
+work/
+.docker/
+.dkms-intree-output.*
