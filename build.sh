@@ -97,6 +97,9 @@ resolve_source_rpm() {
     fi
     [[ "$source_rpm" =~ ^[A-Za-z0-9._+~_-]+\.src\.rpm$ ]] || \
         die "could not read a valid source RPM name from '$source_package': $source_rpm"
+
+    # dnf download --source takes a binary package spec and maps it to its SRPM.
+    source_package_spec="$source_package"
 }
 
 initialize_cache() {
@@ -106,7 +109,6 @@ initialize_cache() {
     mkdir -p "$srpm_cache" "$lock_root"
 
     source_rpm_path="$srpm_cache/$source_rpm"
-    source_package_spec="${source_rpm%.src.rpm}"
 }
 
 download_source_rpm() {
