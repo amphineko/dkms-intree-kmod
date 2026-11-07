@@ -20,8 +20,8 @@ Edit `dkms.conf` and set the module name. Build the image and register it with D
 
 ```sh
 docker build -t dkms-intree-kmod:latest .
-# Or use Podman:
-podman build -t dkms-intree-kmod:latest .
+# Or use rootful Podman, which DKMS can access:
+sudo podman build -t localhost/dkms-intree-kmod:latest .
 
 . ./dkms.conf
 sudo dkms add "$PWD"

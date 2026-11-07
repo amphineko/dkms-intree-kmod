@@ -158,7 +158,14 @@ select_container_engine() {
 run_container_build() {
     local image host_uid host_gid container_uid container_gid module_file
 
-    image="${KMOD_IMAGE:-dkms-intree-kmod:latest}"
+    image="${KMOD_IMAGE:-}"
+    if [[ -z "$image" ]]; then
+        if [[ "${engine##*/}" == podman ]]; then
+            image="localhost/dkms-intree-kmod:latest"
+        else
+            image="dkms-intree-kmod:latest"
+        fi
+    fi
     output_dir="$(mktemp -d "$PWD/.dkms-intree-output.XXXXXX")"
     host_uid="$(id -u)"
     host_gid="$(id -g)"
