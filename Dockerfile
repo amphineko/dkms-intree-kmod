@@ -1,5 +1,5 @@
 ARG FEDORA_VERSION=latest
-FROM fedora:${FEDORA_VERSION}
+FROM docker.io/library/fedora:${FEDORA_VERSION}
 
 ARG IMAGE_VERSION=0.1.0
 

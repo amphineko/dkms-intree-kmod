@@ -155,6 +155,23 @@ select_container_engine() {
     command -v "$engine" >/dev/null 2>&1 || die "container engine is unavailable: $engine"
 }
 
+ensure_container_image() {
+    if "$engine" image inspect "$image" >/dev/null 2>&1; then
+        return
+    fi
+
+    # An explicit image override is managed by the caller; keep Docker/Podman's
+    # normal pull behavior for it.
+    [[ -z "${KMOD_IMAGE:-}" ]] || return
+
+    [[ -f "$PWD/Dockerfile" ]] || \
+        die "container image '$image' is missing and Dockerfile is not present in $PWD"
+
+    log "container image '$image' is missing; building it from $PWD"
+    "$engine" build -t "$image" "$PWD" || \
+        die "failed to build container image '$image'"
+}
+
 run_container_build() {
     local image host_uid host_gid container_uid container_gid module_file
 
@@ -166,6 +183,8 @@ run_container_build() {
             image="dkms-intree-kmod:latest"
         fi
     fi
+    ensure_container_image
+
     output_dir="$(mktemp -d "$PWD/.dkms-intree-output.XXXXXX")"
     host_uid="$(id -u)"
     host_gid="$(id -g)"

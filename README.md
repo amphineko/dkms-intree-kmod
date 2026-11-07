@@ -2,7 +2,7 @@
 
 ## TL;DR
 
-This is a container-backed DKMS package for Fedora and RHEL-family hosts. The host downloads the matching kernel source RPM. The container prepares it and builds one Linux kernel module.
+This is a container-backed DKMS package for Fedora and RHEL-family hosts. The host downloads the matching kernel source RPM. The container prepares it and builds one Linux kernel module. The container image is built automatically on the first DKMS build.
 
 The default module is `ptp_ocp`. Change `BUILT_MODULE_NAME[0]` in `dkms.conf` to build another module. The prepared source is cached under `/var/cache/dkms-intree-kmod`.
 
@@ -16,13 +16,9 @@ git clone <repository-url> ~/src/dkms-intree-kmod
 cd ~/src/dkms-intree-kmod
 ```
 
-Edit `dkms.conf` and set the module name. Build the image and register it with DKMS:
+Edit `dkms.conf` and set the module name, then register it with DKMS:
 
 ```sh
-docker build -t dkms-intree-kmod:latest .
-# Or use rootful Podman, which DKMS can access:
-sudo podman build -t localhost/dkms-intree-kmod:latest .
-
 . ./dkms.conf
 sudo dkms add "$PWD"
 sudo dkms install -m "$PACKAGE_NAME" -v "$PACKAGE_VERSION" -k "$(uname -r)"
