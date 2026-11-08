@@ -26,6 +26,7 @@ RUN dnf -y install \
         kernel-srpm-macros \
         make \
         openssl-devel \
+        patch \
         perl \
         python3-rpm-macros \
         rpm-build \

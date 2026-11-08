@@ -1,0 +1,2 @@
+# Unified diff context preserves the original source's indentation.
+patches/**/*.patch -whitespace

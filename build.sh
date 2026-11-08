@@ -192,6 +192,7 @@ ensure_container_image() {
 
 run_container_build() {
     local image host_uid host_gid container_uid container_gid module_file
+    local -a patch_mount=()
 
     image="${KMOD_IMAGE:-}"
     if [[ -z "$image" ]]; then
@@ -216,7 +217,12 @@ run_container_build() {
         container_gid=0
     fi
 
+    if [[ -d "$PWD/patches" ]]; then
+        patch_mount=(-v "$PWD/patches:/patches:ro,z")
+    fi
+
     "$engine" run --rm \
+        "${patch_mount[@]}" \
         -v "$kernel_devel_host:/kernel-devel:ro" \
         -v "$cache_root:/source-cache:z" \
         -v "$config_file:/config/dkms.conf:ro,z" \

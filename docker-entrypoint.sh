@@ -8,6 +8,7 @@ readonly DEFAULT_CONFIG_FILE="/etc/dkms-intree-kmod/dkms.conf"
 readonly DEFAULT_KERNEL_TREE="/kernel-devel"
 readonly DEFAULT_OUTPUT_DIR="/out"
 readonly DEFAULT_SOURCE_CACHE="/source-cache"
+readonly DEFAULT_PATCH_DIR="/patches"
 
 config_file="${KMOD_CONFIG_FILE:-$DEFAULT_CONFIG_FILE}"
 kernel_tree="${KERNEL_DEVEL:-$DEFAULT_KERNEL_TREE}"
@@ -18,6 +19,7 @@ target_distro_version=""
 output_dir="${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 source_rpm_path="${SOURCE_RPM:-}"
 source_cache="${SOURCE_CACHE:-$DEFAULT_SOURCE_CACHE}"
+patch_dir="${KMOD_PATCH_DIR:-$DEFAULT_PATCH_DIR}"
 stage_dir=""
 
 log() {
@@ -56,6 +58,7 @@ Options:
   --target-distro-version N RPM target distro version (required with --source-rpm)
   --source-rpm FILE         Prepare this matching kernel source RPM
   --source-cache DIR        Cache prepared kernel sources (default: /source-cache)
+  --patch-dir DIR           Compatibility patch directory (default: /patches)
   --output DIR              Output directory (default: /out)
   --config-file FILE        Override the image's dkms.conf
   --help                    Show this help
@@ -208,6 +211,11 @@ while (($# > 0)); do
             source_cache="$2"
             shift 2
             ;;
+        --patch-dir)
+            require_value "$1" "${2-}"
+            patch_dir="$2"
+            shift 2
+            ;;
         --output)
             require_value "$1" "${2-}"
             output_dir="$2"
@@ -234,11 +242,14 @@ done
 # shellcheck disable=SC1090
 source "$config_file"
 
-if [[ -n "$source_rpm_path" ]]; then
+if [[ -n "$source_rpm_path" || -n "$target_distro" || -n "$target_distro_version" ]]; then
     [[ "$target_distro" == fedora || "$target_distro" == rhel ]] || \
-        die "--target-distro must be fedora or rhel when --source-rpm is used"
+        die "--target-distro must be fedora or rhel"
     [[ "$target_distro_version" =~ ^[1-9][0-9]*$ ]] || \
-        die "--target-distro-version must be a positive integer when --source-rpm is used"
+        die "--target-distro-version must be a positive integer"
+fi
+if [[ -d "$patch_dir" ]]; then
+    patch_dir="$(cd "$patch_dir" && pwd -P)" || die "cannot access patch directory: $patch_dir"
 fi
 
 module_name="${BUILT_MODULE_NAME[0]:-}"
@@ -397,41 +408,68 @@ rm -rf "$dkms_source"
 mkdir -p "$dkms_source"
 cp -a "$module_dir/." "$dkms_source/"
 
-apply_ptp_ocp_sysfs_compat() {
-    local source_file="$dkms_source/ptp_ocp.c"
-    local sysfs_header="$kernel_tree/include/linux/sysfs.h"
+prepare_module_patches() {
+    local LC_ALL=C
+    local patch_root patch_file patch_stage patch_target patch_name index=0
+    local -a patch_files=() selected_patches=()
 
-    [[ "$module_name" == ptp_ocp && -f "$source_file" && -f "$sysfs_header" ]] || return 0
-    # Some EL kernels backport the const sysfs interface without updating this
-    # disabled driver. Adapt the copied source as in upstream be16b46f9ebd:
-    # https://git.kernel.org/netdev/net-next/c/be16b46f9ebd
-    grep -Eq '\(\*read\).*const[[:space:]]+struct[[:space:]]+bin_attribute' \
-        "$sysfs_header" || return 0
-    grep -Eq '\(\*write\).*const[[:space:]]+struct[[:space:]]+bin_attribute' \
-        "$sysfs_header" || return 0
-    grep -Eq 'const[[:space:]]+struct[[:space:]]+bin_attribute[[:space:]]*\*[[:space:]]*const[[:space:]]*\*[[:space:]]*bin_attrs[[:space:]]*;' \
-        "$sysfs_header" || return 0
-    grep -Eq 'static[[:space:]]+struct[[:space:]]+bin_attribute[[:space:]]*\*[[:space:]]*bin_art_timecard_attrs\[\]' \
-        "$source_file" || return 0
+    [[ -n "$target_distro" && -n "$target_distro_version" ]] || return 1
+    patch_root="$patch_dir/$module_name/$target_distro/$target_distro_version"
+    [[ -d "$patch_root" ]] || return 1
+    patch_files=("$patch_root"/*.patch)
+    ((${#patch_files[@]} > 0)) || return 1
 
-    log "adapting ptp_ocp sysfs callbacks for const bin_attribute"
-    perl -0777 -i -pe '
-        my $callbacks = s{
-            ((?:disciplining_config|temperature_table)_(?:read|write)
-             \s*\(\s*struct\s+file\s*\*\s*\w+\s*,\s*
-             struct\s+kobject\s*\*\s*\w+\s*,\s*)
-            struct\s+bin_attribute\s*\*\s*(bin_attr\b)
-        }{$1 . "const struct bin_attribute *" . $2}gex;
-        my $attributes = s{\bstatic\s+BIN_ATTR_RW\((disciplining_config|temperature_table)\s*,}
-                          {static const BIN_ATTR_RW($1,}g;
-        my $array = s{\bstatic\s+struct\s+bin_attribute\s*\*\s*bin_art_timecard_attrs\s*\[\s*\]}
-                     {static const struct bin_attribute *const bin_art_timecard_attrs[]}g;
-        die "unexpected ptp_ocp sysfs declarations: callbacks=$callbacks attributes=$attributes arrays=$array\n"
-            unless $callbacks == 4 && $attributes == 2 && $array == 1;
-    ' "$source_file" || die "could not adapt ptp_ocp sysfs declarations"
+    patch_stage="$(mktemp -d)" || return 1
+    if ! cp -a "$dkms_source/." "$patch_stage/"; then
+        warn "could not stage compatibility patches"
+        rm -rf "$patch_stage"
+        return 1
+    fi
+
+    for patch_file in "${patch_files[@]}"; do
+        if git -C "$patch_stage" apply --check "$patch_file" >/dev/null 2>&1; then
+            if ! git -C "$patch_stage" apply "$patch_file"; then
+                warn "could not stage compatibility patch: $patch_file"
+                rm -rf "$patch_stage"
+                return 1
+            fi
+            selected_patches+=("$patch_file")
+        elif git -C "$patch_stage" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+            log "compatibility patch already present: ${patch_file##*/}"
+        else
+            warn "compatibility patch does not apply: $patch_file"
+            rm -rf "$patch_stage"
+            return 1
+        fi
+    done
+    rm -rf "$patch_stage"
+    ((${#selected_patches[@]} > 0)) || return 1
+
+    if [[ -L "$dkms_source/patches" ]]; then
+        warn "cannot place DKMS patches in a symlink: $dkms_source/patches"
+        return 1
+    fi
+    patch_target="$dkms_source/patches/dkms-intree-kmod"
+    if [[ -e "$patch_target" || -L "$patch_target" ]]; then
+        warn "DKMS patch directory already exists: $patch_target"
+        return 1
+    fi
+    if ! mkdir -p "$patch_target"; then
+        warn "could not create DKMS patch directory: $patch_target"
+        return 1
+    fi
+
+    for patch_file in "${selected_patches[@]}"; do
+        patch_name="$(printf '%04d.patch' "$index")"
+        if ! cp "$patch_file" "$patch_target/$patch_name"; then
+            warn "could not stage compatibility patch: $patch_file"
+            return 1
+        fi
+        printf 'PATCH[%d]="dkms-intree-kmod/%s"\n' "$index" "$patch_name" >> "$dkms_source/dkms.conf" || return 1
+        log "selected compatibility patch: ${patch_file##*/}"
+        index=$((index + 1))
+    done
 }
-
-apply_ptp_ocp_sysfs_compat
 
 make_config_args=""
 for config_override in "${config_overrides[@]}"; do
@@ -460,15 +498,41 @@ dkms add -m "$package_name" -v "$package_version"
 # different OpenSSL ABI than the builder image. Leave signing to the host,
 # where its Secure Boot/MOK policy and matching crypto libraries are available.
 dkms_log="$dkms_build_tree/make.log"
-if ! dkms build -m "$package_name" -v "$package_version" -k "$kernel_release" --force \
-    --directive=try_sign_modules=false; then
-    if [[ -s "$dkms_log" ]]; then
-        log "last 160 lines of the DKMS build log ($dkms_log):" >&2
-        tail -n 160 "$dkms_log" >&2 || true
+run_dkms_build() {
+    dkms build -m "$package_name" -v "$package_version" -k "$kernel_release" --force \
+        --directive=try_sign_modules=false
+}
+
+show_dkms_log() {
+    local log_file="$1" label="$2"
+    if [[ -s "$log_file" ]]; then
+        log "last 160 lines of $label:" >&2
+        tail -n 160 "$log_file" >&2 || true
     else
-        warn "DKMS failed without producing $dkms_log"
+        warn "DKMS failed without producing $label"
     fi
-    die "DKMS failed to build $module_name for $kernel_release"
+}
+
+log "building unmodified module source"
+if ! run_dkms_build; then
+    original_dkms_log="$(mktemp)"
+    if [[ -f "$dkms_log" ]]; then
+        cp "$dkms_log" "$original_dkms_log"
+    fi
+    if prepare_module_patches; then
+        log "retrying DKMS build with compatibility patches"
+        if ! run_dkms_build; then
+            show_dkms_log "$original_dkms_log" "the original DKMS build log"
+            show_dkms_log "$dkms_log" "the patched DKMS build log"
+            rm -f "$original_dkms_log"
+            die "DKMS failed to build $module_name for $kernel_release"
+        fi
+    else
+        show_dkms_log "$original_dkms_log" "the DKMS build log"
+        rm -f "$original_dkms_log"
+        die "DKMS failed to build $module_name for $kernel_release"
+    fi
+    rm -f "$original_dkms_log"
 fi
 
 module_file=""
