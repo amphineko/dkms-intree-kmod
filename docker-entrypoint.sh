@@ -56,8 +56,8 @@ Options:
   --config-file FILE        Override the image's dkms.conf
   --help                    Show this help
 
-The normal workflow is to edit BUILT_MODULE_NAME[0] in dkms.conf, build the
-image, and run it with the host kernel-devel tree mounted at /kernel-devel.
+The host-side DKMS wrapper builds the container image on first use, then runs
+it with the host kernel-devel tree mounted at /kernel-devel.
 EOF
 }
 
@@ -82,8 +82,8 @@ prepare_source_tree() {
     local prepared_parent="$2"
     local prepared_source="$3"
     local expected_source_rpm="$4"
-    local rpmbuild_topdir prep_log
-    local -a spec_files
+    local rpmbuild_topdir prep_log target_distro_version
+    local -a spec_files rpmbuild_distro_args=()
     local main_source_file="" candidate source_candidate
 
     stage_dir="$(mktemp -d "$source_cache/staging-${safe_release}.XXXXXX")"
@@ -95,8 +95,20 @@ prepare_source_tree() {
     spec_files=("$rpmbuild_topdir"/SPECS/*.spec)
     ((${#spec_files[@]} == 1)) || \
         die "expected one spec file in $expected_source_rpm; found ${#spec_files[@]}"
+
+    # The build image is Fedora-based. Keep EL source RPMs from taking the
+    # Fedora branches in their specs, which expect Fedora config files.
+    if [[ "$expected_source_rpm" =~ \.el([0-9]+)(_[0-9]+)?\.src\.rpm$ ]]; then
+        target_distro_version="${BASH_REMATCH[1]}"
+        rpmbuild_distro_args+=(--define "fedora 0" --define "rhel $target_distro_version")
+    elif [[ "$expected_source_rpm" =~ \.fc([0-9]+)\.src\.rpm$ ]]; then
+        target_distro_version="${BASH_REMATCH[1]}"
+        rpmbuild_distro_args+=(--define "fedora $target_distro_version" --define "rhel 0")
+    fi
+
     prep_log="$source_cache/$safe_release-rpmbuild.log"
-    if ! rpmbuild -bp --nodeps --define "_topdir $rpmbuild_topdir" "${spec_files[0]}" >"$prep_log" 2>&1; then
+    if ! rpmbuild -bp --nodeps --define "_topdir $rpmbuild_topdir" \
+        "${rpmbuild_distro_args[@]}" "${spec_files[0]}" >"$prep_log" 2>&1; then
         tail -n 80 "$prep_log" >&2 || true
         die "rpmbuild could not prepare the kernel source; see $prep_log"
     fi
