@@ -397,6 +397,42 @@ rm -rf "$dkms_source"
 mkdir -p "$dkms_source"
 cp -a "$module_dir/." "$dkms_source/"
 
+apply_ptp_ocp_sysfs_compat() {
+    local source_file="$dkms_source/ptp_ocp.c"
+    local sysfs_header="$kernel_tree/include/linux/sysfs.h"
+
+    [[ "$module_name" == ptp_ocp && -f "$source_file" && -f "$sysfs_header" ]] || return 0
+    # Some EL kernels backport the const sysfs interface without updating this
+    # disabled driver. Adapt the copied source as in upstream be16b46f9ebd:
+    # https://git.kernel.org/netdev/net-next/c/be16b46f9ebd
+    grep -Eq '\(\*read\).*const[[:space:]]+struct[[:space:]]+bin_attribute' \
+        "$sysfs_header" || return 0
+    grep -Eq '\(\*write\).*const[[:space:]]+struct[[:space:]]+bin_attribute' \
+        "$sysfs_header" || return 0
+    grep -Eq 'const[[:space:]]+struct[[:space:]]+bin_attribute[[:space:]]*\*[[:space:]]*const[[:space:]]*\*[[:space:]]*bin_attrs[[:space:]]*;' \
+        "$sysfs_header" || return 0
+    grep -Eq 'static[[:space:]]+struct[[:space:]]+bin_attribute[[:space:]]*\*[[:space:]]*bin_art_timecard_attrs\[\]' \
+        "$source_file" || return 0
+
+    log "adapting ptp_ocp sysfs callbacks for const bin_attribute"
+    perl -0777 -i -pe '
+        my $callbacks = s{
+            ((?:disciplining_config|temperature_table)_(?:read|write)
+             \s*\(\s*struct\s+file\s*\*\s*\w+\s*,\s*
+             struct\s+kobject\s*\*\s*\w+\s*,\s*)
+            struct\s+bin_attribute\s*\*\s*(bin_attr\b)
+        }{$1 . "const struct bin_attribute *" . $2}gex;
+        my $attributes = s{\bstatic\s+BIN_ATTR_RW\((disciplining_config|temperature_table)\s*,}
+                          {static const BIN_ATTR_RW($1,}g;
+        my $array = s{\bstatic\s+struct\s+bin_attribute\s*\*\s*bin_art_timecard_attrs\s*\[\s*\]}
+                     {static const struct bin_attribute *const bin_art_timecard_attrs[]}g;
+        die "unexpected ptp_ocp sysfs declarations: callbacks=$callbacks attributes=$attributes arrays=$array\n"
+            unless $callbacks == 4 && $attributes == 2 && $array == 1;
+    ' "$source_file" || die "could not adapt ptp_ocp sysfs declarations"
+}
+
+apply_ptp_ocp_sysfs_compat
+
 make_config_args=""
 for config_override in "${config_overrides[@]}"; do
     make_config_args+=" $config_override"
