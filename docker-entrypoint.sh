@@ -444,7 +444,7 @@ PACKAGE_VERSION="$package_version"
 BUILT_MODULE_NAME[0]="$module_name"
 DEST_MODULE_LOCATION[0]="/updates"
 AUTOINSTALL="no"
-MAKE[0]="make -C $kernel_tree M=$dkms_build_tree modules$make_config_args"
+MAKE[0]="make -C $kernel_tree M=$dkms_build_tree ${module_name}.ko$make_config_args"
 EOF
 
 log "kernel release: $kernel_release"
