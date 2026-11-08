@@ -82,6 +82,24 @@ require_host_tools() {
     detect_source_download_option
 }
 
+resolve_host_rpm_target() {
+    local host_fedora host_rhel
+    host_fedora="$(rpm --eval '%{?fedora}')"
+    host_rhel="$(rpm --eval '%{?rhel}')"
+
+    if [[ "$host_fedora" =~ ^[1-9][0-9]*$ && ! "$host_rhel" =~ ^[1-9][0-9]*$ ]]; then
+        target_distro="fedora"
+        target_distro_version="$host_fedora"
+    elif [[ "$host_rhel" =~ ^[1-9][0-9]*$ && ! "$host_fedora" =~ ^[1-9][0-9]*$ ]]; then
+        target_distro="rhel"
+        target_distro_version="$host_rhel"
+    else
+        die "could not determine a unique Fedora/RHEL RPM target from host macros (fedora='${host_fedora:-unset}', rhel='${host_rhel:-unset}')"
+    fi
+
+    log "using host RPM target: $target_distro $target_distro_version"
+}
+
 resolve_kernel_devel() {
     kernel_devel_host="${KMOD_KERNEL_DEVEL_DIR:-/lib/modules/$kernelver/build}"
     kernel_devel_host="$(readlink -e "$kernel_devel_host")" || \
@@ -207,6 +225,8 @@ run_container_build() {
         -e "HOST_GID=$container_gid" \
         "$image" \
         --kernel-release "$kernelver" \
+        --target-distro "$target_distro" \
+        --target-distro-version "$target_distro_version" \
         --kernel-devel /kernel-devel \
         --source-rpm "/source-cache/srpm/$source_rpm" \
         --source-cache /source-cache \
@@ -220,6 +240,7 @@ run_container_build() {
 main() {
     load_config
     require_host_tools
+    resolve_host_rpm_target
     resolve_kernel_devel
     resolve_source_rpm
     initialize_cache

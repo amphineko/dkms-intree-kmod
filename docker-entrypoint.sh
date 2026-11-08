@@ -13,6 +13,8 @@ config_file="${KMOD_CONFIG_FILE:-$DEFAULT_CONFIG_FILE}"
 kernel_tree="${KERNEL_DEVEL:-$DEFAULT_KERNEL_TREE}"
 source_tree="${KERNEL_SOURCE:-}"
 kernel_release="${KERNEL_RELEASE:-}"
+target_distro=""
+target_distro_version=""
 output_dir="${OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 source_rpm_path="${SOURCE_RPM:-}"
 source_cache="${SOURCE_CACHE:-$DEFAULT_SOURCE_CACHE}"
@@ -50,6 +52,8 @@ Options:
   --kernel-source DIR       Full kernel source tree (default: /kernel-source when present,
                             otherwise /kernel-devel)
   --kernel-release VER      Kernel release; auto-detected when omitted
+  --target-distro DISTRO    RPM target distro (fedora or rhel; required with --source-rpm)
+  --target-distro-version N RPM target distro version (required with --source-rpm)
   --source-rpm FILE         Prepare this matching kernel source RPM
   --source-cache DIR        Cache prepared kernel sources (default: /source-cache)
   --output DIR              Output directory (default: /out)
@@ -82,7 +86,7 @@ prepare_source_tree() {
     local prepared_parent="$2"
     local prepared_source="$3"
     local expected_source_rpm="$4"
-    local rpmbuild_topdir prep_log target_distro_version
+    local rpmbuild_topdir prep_log
     local -a spec_files rpmbuild_distro_args=()
     local main_source_file="" candidate source_candidate
 
@@ -96,15 +100,19 @@ prepare_source_tree() {
     ((${#spec_files[@]} == 1)) || \
         die "expected one spec file in $expected_source_rpm; found ${#spec_files[@]}"
 
-    # The build image is Fedora-based. Keep EL source RPMs from taking the
-    # Fedora branches in their specs, which expect Fedora config files.
-    if [[ "$expected_source_rpm" =~ \.el([0-9]+)(_[0-9]+)?\.src\.rpm$ ]]; then
-        target_distro_version="${BASH_REMATCH[1]}"
-        rpmbuild_distro_args+=(--define "fedora 0" --define "rhel $target_distro_version")
-    elif [[ "$expected_source_rpm" =~ \.fc([0-9]+)\.src\.rpm$ ]]; then
-        target_distro_version="${BASH_REMATCH[1]}"
-        rpmbuild_distro_args+=(--define "fedora $target_distro_version" --define "rhel 0")
-    fi
+    # The build image's macros describe Fedora. Set the host target explicitly
+    # and remove the opposite distro macro before evaluating the source spec.
+    case "$target_distro" in
+        fedora)
+            rpmbuild_distro_args+=(--undefine=rhel --define "fedora $target_distro_version")
+            ;;
+        rhel)
+            rpmbuild_distro_args+=(--undefine=fedora --define "rhel $target_distro_version")
+            ;;
+        *)
+            die "unsupported RPM target distro: ${target_distro:-unset}"
+            ;;
+    esac
 
     prep_log="$source_cache/$safe_release-rpmbuild.log"
     if ! rpmbuild -bp --nodeps --define "_topdir $rpmbuild_topdir" \
@@ -180,6 +188,16 @@ while (($# > 0)); do
             kernel_release="$2"
             shift 2
             ;;
+        --target-distro)
+            require_value "$1" "${2-}"
+            target_distro="$2"
+            shift 2
+            ;;
+        --target-distro-version)
+            require_value "$1" "${2-}"
+            target_distro_version="$2"
+            shift 2
+            ;;
         --source-rpm)
             require_value "$1" "${2-}"
             source_rpm_path="$2"
@@ -215,6 +233,13 @@ done
 # DKMS config. It supplies BUILT_MODULE_NAME[0] and optional project overrides.
 # shellcheck disable=SC1090
 source "$config_file"
+
+if [[ -n "$source_rpm_path" ]]; then
+    [[ "$target_distro" == fedora || "$target_distro" == rhel ]] || \
+        die "--target-distro must be fedora or rhel when --source-rpm is used"
+    [[ "$target_distro_version" =~ ^[1-9][0-9]*$ ]] || \
+        die "--target-distro-version must be a positive integer when --source-rpm is used"
+fi
 
 module_name="${BUILT_MODULE_NAME[0]:-}"
 module_name="${module_name%.ko}"
