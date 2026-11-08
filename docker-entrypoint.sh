@@ -423,8 +423,17 @@ dkms add -m "$package_name" -v "$package_version"
 # The mounted kernel-devel may contain a sign-file binary linked against a
 # different OpenSSL ABI than the builder image. Leave signing to the host,
 # where its Secure Boot/MOK policy and matching crypto libraries are available.
-dkms build -m "$package_name" -v "$package_version" -k "$kernel_release" --force \
-    --directive=try_sign_modules=false
+dkms_log="$dkms_build_tree/make.log"
+if ! dkms build -m "$package_name" -v "$package_version" -k "$kernel_release" --force \
+    --directive=try_sign_modules=false; then
+    if [[ -s "$dkms_log" ]]; then
+        log "last 160 lines of the DKMS build log ($dkms_log):" >&2
+        tail -n 160 "$dkms_log" >&2 || true
+    else
+        warn "DKMS failed without producing $dkms_log"
+    fi
+    die "DKMS failed to build $module_name for $kernel_release"
+fi
 
 module_file=""
 if [[ -d "$dkms_build_root" ]]; then
