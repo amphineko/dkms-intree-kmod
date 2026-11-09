@@ -388,7 +388,7 @@ case "$package_base" in
     *-"$safe_module") package_name="$package_base" ;;
     *) package_name="${package_base}-${safe_module}" ;;
 esac
-package_version="${PACKAGE_VERSION:-0.1.0}"
+package_version="${PACKAGE_VERSION:-0.1.1}"
 package_version="${package_version//[^A-Za-z0-9._+~-]/_}"
 dkms_source="/usr/src/${package_name}-${package_version}"
 dkms_build_tree="/var/lib/dkms/${package_name}/${package_version}/build"
