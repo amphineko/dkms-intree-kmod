@@ -10,7 +10,7 @@ The default module is `ptp_ocp`. Change `BUILT_MODULE_NAME[0]` in `dkms.conf` to
 
 Install Docker or Podman, DKMS, and the matching `kernel-devel`. DNF4 hosts also need `dnf-plugins-core`. Enable a repository that provides the matching kernel source RPM.
 
-If an unpatched build fails, DKMS tries compatible patches under `patches/<module>/<distro>/<version>/` in filename order. Patch paths are relative to the module source directory.
+Before building, matching patches under `patches/<module>/always/` are applied. If the build fails, DKMS also tries compatibility patches under `patches/<module>/<distro>/<version>/`. Patches are processed in filename order, with paths relative to the module source directory. Non-matching pre-build patches are skipped.
 
 ```sh
 mkdir -p ~/src

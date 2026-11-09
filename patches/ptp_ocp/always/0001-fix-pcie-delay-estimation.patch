@@ -1,0 +1,23 @@
+From f8c8bd159a9bf626dd4921b7746ff481fce8c758 Mon Sep 17 00:00:00 2001
+From: Vadim Fedorenko <vadim.fedorenko@linux.dev>
+Date: Wed, 7 Oct 2026 20:33:59 +0000
+Subject: [PATCH] ptp: ocp: fix PCIe delay estimation calculation
+
+Use KTIME_MAX for the signed ktime_t delay instead of U64_MAX, which
+becomes negative and prevents the delay estimate from being updated.
+
+Upstream: https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=f8c8bd159a9bf626dd4921b7746ff481fce8c758
+Signed-off-by: Vadim Fedorenko <vadim.fedorenko@linux.dev>
+Reviewed-by: Daniel Machon <daniel.machon@microchip.com>
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+
+--- a/ptp_ocp.c
++++ b/ptp_ocp.c
+@@ -1825,6 +1825,6 @@
+ static void
+ ptp_ocp_estimate_pci_timing(struct ptp_ocp *bp)
+ {
+-	ktime_t start, end, delay = U64_MAX;
++	ktime_t start, end, delay = KTIME_MAX;
+ 	u32 ctrl;
+ 	int i;

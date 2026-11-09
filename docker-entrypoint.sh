@@ -58,7 +58,7 @@ Options:
   --target-distro-version N RPM target distro version (required with --source-rpm)
   --source-rpm FILE         Prepare this matching kernel source RPM
   --source-cache DIR        Cache prepared kernel sources (default: /source-cache)
-  --patch-dir DIR           Compatibility patch directory (default: /patches)
+  --patch-dir DIR           Module patch directory (default: /patches)
   --output DIR              Output directory (default: /out)
   --config-file FILE        Override the image's dkms.conf
   --help                    Show this help
@@ -408,6 +408,25 @@ rm -rf "$dkms_source"
 mkdir -p "$dkms_source"
 cp -a "$module_dir/." "$dkms_source/"
 
+apply_matching_patches() {
+    local LC_ALL=C
+    local patch_file
+    # These patches fix behavior, so apply them before any build attempt.
+    # A source tree can predate the affected code or already contain the fix.
+    for patch_file in "$patch_dir/$module_name/always/"*.patch; do
+        if git -C "$dkms_source" apply --check "$patch_file" >/dev/null 2>&1; then
+            git -C "$dkms_source" apply "$patch_file" || die "could not apply patch: $patch_file"
+            log "applied matching patch: ${patch_file##*/}"
+        elif git -C "$dkms_source" apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+            log "patch already present: ${patch_file##*/}"
+        else
+            log "patch does not match source, skipping: ${patch_file##*/}"
+        fi
+    done
+}
+
+apply_matching_patches
+
 prepare_module_patches() {
     local LC_ALL=C
     local patch_root patch_file patch_stage patch_target patch_name index=0
@@ -513,7 +532,7 @@ show_dkms_log() {
     fi
 }
 
-log "building unmodified module source"
+log "building module source"
 if ! run_dkms_build; then
     original_dkms_log="$(mktemp)"
     if [[ -f "$dkms_log" ]]; then
